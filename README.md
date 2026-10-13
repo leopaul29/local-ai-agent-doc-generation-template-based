@@ -8,7 +8,7 @@ filled document in the same format. Everything runs on your machine with [Ollama
 
 1. Install [Ollama](https://ollama.com/download) (0.5 or later) and pull a model:
    ```bash
-   ollama pull llama3.2
+   ollama pull qwen3:1.7b
    ```
 2. Install the backend and start it (Python 3.10+):
    ```bash
@@ -19,7 +19,7 @@ filled document in the same format. Everything runs on your machine with [Ollama
    ```
 3. Open http://localhost:8000.
 
-Environment variables: `OLLAMA_MODEL` picks another model (a bigger one writes better text),
+Environment variables: `OLLAMA_MODEL` picks another model than `qwen3:1.7b` (a bigger one writes better text),
 `OLLAMA_URL` points to another Ollama server (default `http://localhost:11434`).
 
 ## Templates
