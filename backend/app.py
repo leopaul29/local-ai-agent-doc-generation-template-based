@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from documents import FORMATS, fill_template, read_template
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:1.7b")
 ROOT = Path(__file__).resolve().parent.parent
 # shortcut: uploads and outputs are never deleted, add a cleanup if storage/ grows too big
 TEMPLATES = ROOT / "storage" / "templates"
@@ -75,6 +75,7 @@ def ask_llm(system: str, messages: list[dict], fields: list[str]) -> dict:
         "model": OLLAMA_MODEL,
         "messages": [{"role": "system", "content": system}, *messages],
         "format": schema,
+        "think": False,  # qwen3 thinks by default: slower, and the schema already shapes the answer
         "stream": False,
         "options": {"num_ctx": 8192},
     }
