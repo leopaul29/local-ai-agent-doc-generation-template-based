@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doc Agent</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f6f8; --panel: #ffffff; --text: #1c2230; --muted: #5d6676; --border: #dde1e8;
+      --accent: #2563eb; --on-accent: #ffffff; --user: #e7efff; --filled: #dcfce7; --filled-text: #166534; --error: #b42318;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111418; --panel: #1a1e24; --text: #e6e8eb; --muted: #a0a9b8; --border: #2f3640;
+        --accent: #6b9bff; --on-accent: #0b1220; --user: #1f2d4a; --filled: #14361f; --filled-text: #86efac; --error: #ff8a80;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 760px; height: 100dvh; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    h1 { margin: 0; font-size: 20px; }
+    p { margin: 4px 0 0; }
+    code { font-size: 13px; }
+    .muted { color: var(--muted); }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+    .fields { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; }
+    .fields:empty { display: none; }
+    .fields li { padding: 2px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; color: var(--muted); }
+    .fields li.filled { background: var(--filled); color: var(--filled-text); border-color: transparent; }
+    .messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+    .message { max-width: 85%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--border); }
+    .message.user { align-self: flex-end; background: var(--user); border-color: transparent; }
+    .message.pending { color: var(--muted); }
+    .message.error { color: var(--error); }
+    form { display: flex; gap: 8px; }
+    textarea { flex: 1; resize: none; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: inherit; font: inherit; }
+    button, .download { padding: 8px 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+    .download { margin-left: auto; }
+    button:disabled, textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+    input[type="file"] { max-width: 100%; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Doc Agent</h1>
+      <p class="muted">Upload a .docx, .xlsx, .md or .txt template with <code>{{ field_name }}</code> placeholders, then give the information in the chat.</p>
+    </header>
+
+    <section class="panel" aria-label="Template">
+      <div class="row">
+        <label for="file">Template</label>
+        <input id="file" type="file" accept=".docx,.xlsx,.md,.txt">
+        <a id="download" class="download" hidden>Download</a>
+      </div>
+      <ul id="fields" class="fields" aria-label="Fields (green: filled)"></ul>
+    </section>
+
+    <section id="messages" class="messages" aria-live="polite" aria-label="Conversation"></section>
+
+    <form id="form">
+      <textarea id="input" rows="2" aria-label="Message" placeholder="Give the information for the document (Enter to send, Shift+Enter for a new line)" disabled></textarea>
+      <button id="send" type="submit" disabled>Send</button>
+    </form>
+  </main>
+
+  <script>
+    // The browser keeps the conversation and sends all of it on each turn: the server stays stateless.
+    const state = { templateId: null, templateName: "", fields: [], values: {}, messages: [] };
+    const $ = (id) => document.getElementById(id);
+
+    function addMessage(kind, text) {
+      const div = document.createElement("div");
+      div.className = `message ${kind}`;
+      div.textContent = text; // model output is untrusted: never render it as HTML
+      $("messages").append(div);
+      div.scrollIntoView({ block: "end" });
+      return div;
+    }
+
+    function renderFields() {
+      $("fields").replaceChildren(...state.fields.map((field) => {
+        const li = document.createElement("li");
+        li.textContent = field;
+        li.classList.toggle("filled", Boolean(state.values[field]));
+        li.title = state.values[field] || "Missing";
+        return li;
+      }));
+    }
+
+    function setBusy(busy) {
+      $("file").disabled = busy;
+      $("send").disabled = $("input").disabled = busy || !state.templateId;
+    }
+
+    async function api(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Request failed (${response.status})`);
+      return data;
+    }
+
+    $("file").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append("file", file);
+      setBusy(true);
+      try {
+        const template = await api("/api/templates", { method: "POST", body });
+        Object.assign(state, { templateId: template.id, templateName: file.name, fields: template.fields, values: {} });
+        $("download").hidden = true;
+        renderFields();
+        addMessage("assistant", `Template "${file.name}" loaded. Fields to fill: ${template.fields.join(", ")}.\nTell me the information for the document.`);
+      } catch (error) {
+        addMessage("error", error.message);
+      }
+      setBusy(false);
+      $("input").focus();
+    });
+
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const content = $("input").value.trim();
+      if (!content) return;
+      $("input").value = "";
+      addMessage("user", content);
+      state.messages.push({ role: "user", content });
+      setBusy(true);
+      const pending = addMessage("pending", "Writing the document…");
+      try {
+        const answer = await api("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ template_id: state.templateId, messages: state.messages }),
+        });
+        state.messages.push({ role: "assistant", content: answer.reply });
+        state.values = answer.values;
+        renderFields();
+        addMessage("assistant", answer.reply);
+        const name = `filled-${state.templateName}`;
+        Object.assign($("download"), { href: `/api/download/${state.templateId}`, download: name, textContent: `Download ${name}`, hidden: false });
+      } catch (error) {
+        addMessage("error", error.message);
+      }
+      pending.remove();
+      setBusy(false);
+      $("input").focus();
+    });
+
+    $("input").addEventListener("keydown", (event) => {
+      // isComposing: Enter that confirms an IME conversion (Japanese, Chinese…) must not send
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        $("form").requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>
